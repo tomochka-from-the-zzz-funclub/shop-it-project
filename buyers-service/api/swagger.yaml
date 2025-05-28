@@ -1,0 +1,164 @@
+openapi: 3.0.0
+servers:
+    - {}
+paths:
+    /api/v1/auth/login:
+        post:
+            tags:
+                - BuyersService
+            summary: Аутентифицирует пользователя и возвращает JWT-токен
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/requestBuyersServiceLogin'
+            responses:
+                "200":
+                    description: Successful operation
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/responseBuyersServiceLogin'
+                "400":
+                    description: Bad Request
+                "401":
+                    description: Unauthorized
+    /api/v1/auth/register:
+        post:
+            tags:
+                - BuyersService
+            summary: Регистрирует нового пользователя и создаёт связанного покупателя
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/requestBuyersServiceRegister'
+            responses:
+                "200":
+                    description: Successful operation
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/responseBuyersServiceRegister'
+                "400":
+                    description: Bad Request
+                "409":
+                    description: Conflict
+    /api/v1/buyer:
+        get:
+            tags:
+                - BuyersService
+            summary: Получает информацию о покупателе, связанном с текущим пользователем
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/requestBuyersServiceGetBuyer'
+            responses:
+                "200":
+                    description: Successful operation
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/responseBuyersServiceGetBuyer'
+                "401":
+                    description: Unauthorized
+                "404":
+                    description: Not Found
+        delete:
+            tags:
+                - BuyersService
+            summary: Удаляет текущего пользователя и связанную информацию о покупателе
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/requestBuyersServiceDeleteUser'
+            responses:
+                "200":
+                    description: Successful operation
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/responseBuyersServiceDeleteUser'
+                "401":
+                    description: Unauthorized
+                "404":
+                    description: Not Found
+components:
+    schemas:
+        request.BuyerCreate:
+            type: object
+            properties:
+                birthdate:
+                    type: string
+                    format: date-time
+                gender:
+                    type: boolean
+                name:
+                    type: string
+                phone:
+                    type: number
+                    format: int64
+        requestBuyersServiceDeleteUser:
+            type: object
+            properties:
+                id:
+                    type: string
+                    format: uuid
+        requestBuyersServiceGetBuyer:
+            type: object
+            properties:
+                id:
+                    type: string
+                    format: uuid
+        requestBuyersServiceLogin:
+            type: object
+            properties:
+                email:
+                    type: string
+                password:
+                    type: string
+        requestBuyersServiceRegister:
+            type: object
+            properties:
+                buyer:
+                    $ref: '#/components/schemas/request.BuyerCreate'
+                email:
+                    type: string
+                password:
+                    type: string
+        response.BuyerInfo:
+            type: object
+            properties:
+                ID:
+                    type: string
+                    format: uuid
+                birthdate:
+                    type: string
+                    format: date-time
+                gender:
+                    type: boolean
+                name:
+                    type: string
+                phone:
+                    type: number
+                    format: int64
+        responseBuyersServiceDeleteUser:
+            type: object
+        responseBuyersServiceGetBuyer:
+            type: object
+            properties:
+                res:
+                    $ref: '#/components/schemas/response.BuyerInfo'
+        responseBuyersServiceLogin:
+            type: object
+            properties:
+                token:
+                    type: string
+        responseBuyersServiceRegister:
+            type: object
+            properties:
+                userID:
+                    type: string
+                    format: uuid

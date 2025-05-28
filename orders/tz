@@ -1,0 +1,25 @@
+/order/create/ - создать заказ
+headers: buyer_token
+body: карточка товара/число единиц товара+адрес+....
+
+ответ - id заказа
+
+/order/get/{id} - получить заказ
+headers: buyer_token
+
+ответ - описание заказа+его статус+дата доставки
+
+/order/info?status=&limit=&offset= - получить список заказов созданных пользвователем
+headers: buyer_token
+
+/корзина/add/ - добавить товар в корзину
+headers: buyer_token
+body: карточка товара/число единиц товара
+
+/order/create/from/корзина/ - создаем заказ из всех заказов в корзине, очищаем корзину
+headers: buyer_token
+
+
+/orders/comment/create/{id} - создать комментарий на оконченный заказ с айди
+/orders/comment/delete/{id} - удалить комментарий ьекущаего пользователя 
+в хедерс токен 
