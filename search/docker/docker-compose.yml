@@ -1,0 +1,2 @@
+include:
+  - './elastic_search/docker-compose.elasticsearch.yml'

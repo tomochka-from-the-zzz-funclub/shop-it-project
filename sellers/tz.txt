@@ -1,0 +1,18 @@
+/sellers/account/
+продавцы
+- создание												/create (return supplierID)
+- изменение данных 										/update (SupplierID from header)
+- удаление(деактивируем карточки + удаляем все остатки) /delete (SupplierID from header)
+
+/sellers/goods/
+goodCard - карточка товара хранится вся информация, создается конкретным продавцом только для себя
+информация: id(uuid), цена, имя, описание, вес, id продавца(уид)
+- создание карточки 							/create (return goodID) (SupplierID from header)
+- изменение карточки (активация и деактивация)  /update/{:goodID} (pass goodID) (SupplierID from header)
+- удаление 										/delete/{:goodID} (pass goodID) (SupplierID from header)
+- чтение 										/read/{:goodID} (pass goodID) (SupplierID from header)
+
+/sellers/goods/
+goodNumber - число товаров для карточки товара задается конкретным продавцом только для себя 
+- добавить число товаров /add/{:goodID} (pass goodID) (SupplierID from header) (number of goods from body)
+- удалить число товаров  /delete/{:goodID} (pass goodID) (SupplierID from header) (number of goods from body)

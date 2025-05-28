@@ -1,0 +1,208 @@
+basePath: /
+definitions:
+  product_dto.ProductRequest:
+    properties:
+      brand:
+        type: string
+      category:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+      stock:
+        type: integer
+    type: object
+  product_dto.SearchRequest:
+    properties:
+      brand:
+        items:
+          type: string
+        type: array
+      categories:
+        items:
+          type: string
+        type: array
+      highlightFields:
+        items:
+          type: string
+        type: array
+      maxPrice:
+        type: number
+      minPrice:
+        type: number
+      page:
+        type: integer
+      pageSize:
+        type: integer
+      query:
+        type: string
+      sortBy:
+        type: string
+      sortOrder:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: API для поиска и управления каталогом продуктов
+  title: Product Search API
+  version: "1.0"
+paths:
+  /product/bulk:
+    post:
+      consumes:
+      - application/json
+      description: Индексация списка продуктов
+      parameters:
+      - description: Список продуктов
+        in: body
+        name: body
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/product_dto.ProductRequest'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Массовое создание продуктов
+      tags:
+      - product
+  /product/create:
+    post:
+      consumes:
+      - application/json
+      description: Индексация одного продукта
+      parameters:
+      - description: Данные продукта
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/product_dto.ProductRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Создать продукт
+      tags:
+      - product
+  /product/delete/{id}:
+    delete:
+      description: Удалить продукт из индекса по его ID
+      parameters:
+      - description: ID продукта
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Удалить продукт
+      tags:
+      - product
+  /product/health:
+    get:
+      description: Информация о состоянии (green, yellow, red) и метрики кластера
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Статус кластера Elasticsearch
+      tags:
+      - product
+  /product/search:
+    post:
+      consumes:
+      - application/json
+      description: Поиск товаров с фильтрацией, фасетами, сортировкой и подсветкой
+      parameters:
+      - description: Параметры поиска
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/product_dto.SearchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Поиск товаров
+      tags:
+      - product
+schemes:
+- http
+swagger: "2.0"
