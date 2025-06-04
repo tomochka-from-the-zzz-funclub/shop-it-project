@@ -1,178 +1,190 @@
 package transport
 
 import (
-	"encoding/json"
 	"fmt"
-
-	config "market/internal/cfg"
-	myLog "market/internal/logger"
-	"market/internal/models"
-	service "market/internal/services"
 	"net/http"
 
-	"github.com/fasthttp/router"
-	"github.com/google/uuid"
+	"market/internal/config"
+	"market/internal/logger"
+	"market/internal/models/request"
+	"market/internal/services/auth"
+	sellers "market/internal/services/sellers"
 
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/valyala/fasthttp"
 )
 
 type HandlersBuilder struct {
-	srv  service.InterfaceService
-	rout *router.Router
+	srv         sellers.ISellers
+	authService *auth.AuthService
+	app         *fiber.App
+	log         *logger.Logger
 }
 
-func HandleCreate(cfg config.Config, s service.InterfaceService) {
-
+func StartServer(cfg *config.Options, srv sellers.ISellers, authService *auth.AuthService, log *logger.Logger) {
 	hb := HandlersBuilder{
-		srv:  s,
-		rout: router.New(),
+		srv:         srv,
+		authService: authService,
+		app:         fiber.New(fiber.Config{Immutable: true}),
+		log:         log,
 	}
 
+	// Start Prometheus metrics server
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		http.ListenAndServe(":8090", nil)
+		if err := http.ListenAndServe(":8090", nil); err != nil {
+			log.LogErrorf("Failed to start metrics server: %v", err)
+		}
 	}()
 
-	hb.rout.POST("/sellers/create", hb.HandleSellersCreate()) //общее количество просмотров товаров
+	// Configure middleware
+	hb.app.Use(cors.New(cors.Config{
+		AllowOrigins:  "*",
+		AllowMethods:  "GET,POST,PUT,DELETE",
+		AllowHeaders:  "Authorization,Content-Type,X-Request-Id",
+		ExposeHeaders: "X-Request-Id",
+	}))
+	hb.app.Use(requestid.New(requestid.Config{
+		Header: "X-Request-Id",
+	}))
 
-	hb.rout.PUT("/sellers/update/{uuid}", hb.HandleUpdateSeller()) // — обновление информации о продавце
+	// Authorization middleware
+	hb.app.Use(func(c *fiber.Ctx) error {
+		if c.Path() == "/api/v1/auth/register" || c.Path() == "/api/v1/auth/login" {
+			return c.Next()
+		}
+		token := c.Get("Authorization")
+		if token == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing authorization header"})
+		}
+		if len(token) > 7 && token[:7] == "Bearer " {
+			token = token[7:]
+		}
+		sellerID, err := authService.ValidateToken(token)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid token"})
+		}
+		c.Locals("sellerID", sellerID)
+		return c.Next()
+	})
 
-	hb.rout.DELETE("/sellers/delete", hb.HandleDeleteSeller()) // удаление продавца
+	// Define routes
+	api := hb.app.Group("/api/v1")
+	api.Post("/auth/register", hb.HandleRegister)
+	api.Post("/auth/login", hb.HandleLogin)
+	api.Put("/sellers/update/:uuid", hb.HandleUpdateSeller)
+	api.Delete("/sellers/delete/:uuid", hb.HandleDeleteSeller)
 
-	fmt.Println(fasthttp.ListenAndServe(":8080", hb.rout.Handler))
-}
-
-// Вспомогательная функция для отправки JSON ответа
-func jsonResponse(ctx *fasthttp.RequestCtx, response interface{}) {
-	respBody, err := json.Marshal(response)
-	if err != nil {
-		httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to create response")
-		return
+	// Start server
+	if err := hb.app.Listen(":8084"); err != nil {
+		log.LogErrorf("Failed to start server: %v", err)
 	}
-	ctx.SetContentType("application/json")
-	ctx.SetBody(respBody)
 }
 
-// Вспомогательная функция для отправки ошибки
-func httpErrorResponse(ctx *fasthttp.RequestCtx, statusCode int, message string) {
-	ctx.SetStatusCode(statusCode)
-	ctx.SetContentType("application/json")
-	response := map[string]string{"error": message}
-	jsonResponse(ctx, response)
+func (hb *HandlersBuilder) HandleRegister(c *fiber.Ctx) error {
+	hb.log.LogDebugf("Start func HandleRegister")
+	var req struct {
+		Email      string         `json:"email"`
+		Password   string         `json:"password"`
+		SellerInfo request.Seller `json:"seller_info"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		hb.log.LogErrorf("Invalid request body: %v", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	sellerID, err := hb.authService.Register(c.Context(), req.Email, req.Password, req.SellerInfo)
+	if err != nil {
+		hb.log.LogErrorf("Failed to register seller with email %s: %v", req.Email, err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to register seller"})
+	}
+
+	hb.log.LogInfof("Successfully registered seller %s", sellerID)
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": sellerID.String()})
 }
 
-func (hb *HandlersBuilder) HandleSellersCreate() func(ctx *fasthttp.RequestCtx) {
-	return metrics(func(ctx *fasthttp.RequestCtx) {
-		myLog.Log.Debugf("Start func HandleSellersCreate")
-		if ctx.IsPost() {
-			// Создаем экземпляр структуры Seller
-			var seller models.Seller
+func (hb *HandlersBuilder) HandleLogin(c *fiber.Ctx) error {
+	hb.log.LogDebugf("Start func HandleLogin")
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		hb.log.LogErrorf("Invalid request body: %v", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
 
-			// Считываем и декодируем JSON из тела запроса
-			if err := json.Unmarshal(ctx.PostBody(), &seller); err != nil {
-				httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid request body")
-				fmt.Println(err.Error())
-				return
-			}
+	token, err := hb.authService.Login(c.Context(), req.Email, req.Password)
+	if err != nil {
+		hb.log.LogErrorf("Failed to login seller with email %s: %v", req.Email, err)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid credentials"})
+	}
 
-			id, err := hb.srv.Create(seller)
-			if err != nil {
-				httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to create seller")
-				return
-			}
+	hb.log.LogInfof("Successfully logged in seller with email %s", req.Email)
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"token": token})
+}
 
-			// Если все прошло успешно, выводим ID продавца в тело ответа
-			ctx.SetStatusCode(fasthttp.StatusCreated) // Устанавливаем статус код 201 Created
-			ctx.SetContentType("application/json")
-			response := map[string]interface{}{
-				"id": id.String(), // Если id - это UUID, преобразуем его в строку
-			}
-			jsonResponse(ctx, response)
+func (hb *HandlersBuilder) HandleUpdateSeller(c *fiber.Ctx) error {
+	hb.log.LogDebugf("Start func HandleUpdateSeller")
+	var seller request.Seller
+	if err := c.BodyParser(&seller); err != nil {
+		hb.log.LogErrorf("Invalid request body: %v", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	idStr := c.Params("uuid")
+	sellerID, err := uuid.Parse(idStr)
+	if err != nil {
+		hb.log.LogErrorf("Invalid seller ID: %v", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid seller ID"})
+	}
+
+	// Check if the authenticated seller matches the requested ID
+	authSellerID, ok := c.Locals("sellerID").(uuid.UUID)
+	if !ok || authSellerID != sellerID {
+		hb.log.LogErrorf("Seller %s attempted to update seller %s", authSellerID, sellerID)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	if err := hb.srv.UpdateSeller(c.Context(), sellerID, seller); err != nil {
+		hb.log.LogErrorf("Failed to update seller %s: %v", sellerID, err)
+		if err.Error() == "seller not found" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": fmt.Sprintf("seller with ID %s not found", sellerID)})
 		}
-	}, "HandleSellersCreate")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update seller"})
+	}
+
+	hb.log.LogInfof("Successfully updated seller %s", sellerID)
+	return c.Status(fiber.StatusNoContent).Send(nil)
 }
 
-func (hb *HandlersBuilder) HandleUpdateSeller() func(ctx *fasthttp.RequestCtx) {
-	return metrics(func(ctx *fasthttp.RequestCtx) {
-		myLog.Log.Debugf("Start func HandleUpdateSeller")
+func (hb *HandlersBuilder) HandleDeleteSeller(c *fiber.Ctx) error {
+	hb.log.LogDebugf("Start func HandleDeleteSeller")
+	idStr := c.Params("uuid")
+	sellerID, err := uuid.Parse(idStr)
+	if err != nil {
+		hb.log.LogErrorf("Invalid seller ID: %v", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid seller ID"})
+	}
 
-		// Проверяем, что метод запроса - PUT или PATCH (в зависимости от вашей структуры)
-		if ctx.IsPut() {
-			var seller models.Seller
+	// Check if the authenticated seller matches the requested ID
+	authSellerID, ok := c.Locals("sellerID").(uuid.UUID)
+	if !ok || authSellerID != sellerID {
+		hb.log.LogErrorf("Seller %s attempted to delete seller %s", authSellerID, sellerID)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
 
-			// Считываем и декодируем JSON из тела запроса
-			if err := json.Unmarshal(ctx.PostBody(), &seller); err != nil {
-				httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid request body")
-				return
-			}
-
-			// Получаем ID из параметров URL
-			id, ok := ctx.UserValue("uuid").(string) // Предполагается, что ID передаётся как параметр
-			if !ok {
-				myLog.Log.Errorf("Error unknown type id")
-			}
-			fmt.Println(id)
-			sellerID, err := uuid.Parse(fmt.Sprintf("%v", id)) // Преобразование ID в UUID
-			fmt.Println(sellerID)
-			if err != nil {
-				httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
-				fmt.Println(err.Error())
-				return
-			}
-
-			// Вызываем метод обновления
-			err = hb.srv.Update(sellerID, seller)
-			if err != nil {
-				httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to update seller")
-				return
-			}
-
-			// Устанавливаем статус код 204 No Content для успешного обновления
-			ctx.SetStatusCode(fasthttp.StatusNoContent)
-			return
+	if err := hb.srv.DeleteSeller(c.Context(), sellerID); err != nil {
+		hb.log.LogErrorf("Failed to delete seller %s: %v", sellerID, err)
+		if err.Error() == "seller not found" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": fmt.Sprintf("seller with ID %s not found", sellerID)})
 		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete seller"})
+	}
 
-		// Если метод не подходит, отвечаем ошибкой
-		httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
-	}, "HandleUpdateSeller")
-}
-
-func (hb *HandlersBuilder) HandleDeleteSeller() func(ctx *fasthttp.RequestCtx) {
-	return metrics(func(ctx *fasthttp.RequestCtx) {
-		myLog.Log.Debugf("Start func HandleDeleteSeller")
-
-		// Проверяем, что метод запроса - DELETE
-		if ctx.IsDelete() {
-			// Получаем ID продавца из параметров URL
-			id := ctx.UserValue("uuid").(string) // ID передается как параметр
-			fmt.Println(id)
-			sellerID, err := uuid.Parse(fmt.Sprintf("%v", id)) // Преобразование ID в UUID
-			fmt.Println(sellerID)
-			if err != nil {
-				httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
-				return
-			}
-
-			// Вызываем метод удаления
-			err = hb.srv.Delete(sellerID)
-			if err != nil {
-				// Если продавец не найден, возвращаем 404 Not Found
-				if err.Error() == "not found" {
-					httpErrorResponse(ctx, fasthttp.StatusNotFound, fmt.Sprintf("Seller with ID %s not found", sellerID))
-					return
-				}
-				// В случае других ошибок возвращаем 500 Internal Server Error
-				httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to delete seller")
-				return
-			}
-
-			// Устанавливаем статус код 204 No Content для успешного удаления
-			ctx.SetStatusCode(fasthttp.StatusNoContent)
-			return
-		}
-
-		// Если метод не подходит, отвечаем ошибкой
-		httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
-	}, "HandleDeleteSeller")
+	hb.log.LogInfof("Successfully deleted seller %s", sellerID)
+	return c.Status(fiber.StatusNoContent).Send(nil)
 }

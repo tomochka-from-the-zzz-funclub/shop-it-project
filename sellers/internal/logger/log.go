@@ -1,65 +1,88 @@
-package myLog
+package logger
 
 import (
 	"os"
+	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 )
 
-var Log *MyLogger
+var Log Logger
+var once sync.Once
 
-func init() {
-	Log = initLogger()
+type Logger struct {
+	zerolog.Logger
 }
 
-type MyLogger struct {
-	Lg zerolog.Logger
+type LogVals struct {
+	Endpoint        string
+	ResponseCodeErr *error
 }
 
-func initLogger() *MyLogger {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+func (l *Logger) LogDebug(msg string) {
+	l.Debug().Msg(msg)
+}
 
-	return &MyLogger{
-		Lg: zerolog.New(os.Stdout).With().Timestamp().Logger(),
+func (l *Logger) LogDebugf(format string, v ...interface{}) {
+	l.Debug().Msgf(format, v...)
+}
+
+func (l *Logger) LogInfo(msg string) {
+	l.Info().Msg(msg)
+}
+
+func (l *Logger) LogInfof(format string, v ...interface{}) {
+	l.Info().Msgf(format, v...)
+}
+
+func (l *Logger) LogWarn(msg string) {
+	l.Warn().Msg(msg)
+}
+
+func (l *Logger) LogWarnf(format string, v ...interface{}) {
+	l.Warn().Msgf(format, v...)
+}
+
+func (l *Logger) LogError(msg string) {
+	l.Error().Msg(msg)
+}
+
+func (l *Logger) LogErrorf(format string, v ...interface{}) {
+	l.Error().Msgf(format, v...)
+}
+
+func (l *Logger) LogFatal(msg string) {
+	l.Fatal().Msg(msg)
+}
+
+func (l *Logger) LogFatalf(format string, v ...interface{}) {
+	l.Fatal().Msgf(format, v...)
+}
+
+func getLog(serviceName string, isPretty bool, logLevel string) zerolog.Logger {
+	logger := zerolog.New(os.Stdout).With().Str("module", serviceName).Timestamp()
+
+	if isPretty {
+		logger = zerolog.New(os.Stdout).Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).With().Str("module", serviceName).Timestamp()
 	}
+
+	if logLevel != "" {
+		level, err := zerolog.ParseLevel(logLevel)
+		if err != nil {
+			// default log level is debug
+			return logger.Logger()
+		}
+		zerolog.SetGlobalLevel(level)
+	}
+
+	return logger.Logger()
 }
 
-func (l *MyLogger) Infof(mes string, v ...interface{}) {
-	if len(v) == 0 {
-		l.Lg.Info().Msgf(mes)
-		return
-	}
-	l.Lg.Info().Msgf(mes, v)
-}
+func New(serviceName string, isPretty bool, logLevel string) *Logger {
+	once.Do(func() {
+		Log = Logger{getLog(serviceName, isPretty, logLevel)}
+	})
 
-func (l *MyLogger) Debugf(mes string, v ...interface{}) {
-	if len(v) == 0 {
-		l.Lg.Debug().Msgf(mes)
-		return
-	}
-	l.Lg.Debug().Msgf(mes, v)
-}
-
-func (l *MyLogger) Errorf(mes string, v ...interface{}) {
-	if len(v) == 0 {
-		l.Lg.Error().Msgf(mes)
-		return
-	}
-	l.Lg.Error().Msgf(mes, v)
-}
-
-func (l *MyLogger) Warnf(mes string, v ...interface{}) {
-	if len(v) == 0 {
-		l.Lg.Warn().Msgf(mes)
-		return
-	}
-	l.Lg.Warn().Msgf(mes, v)
-}
-
-func (l *MyLogger) Fatalf(mes string, v ...interface{}) {
-	if len(v) == 0 {
-		l.Lg.Fatal().Msgf(mes)
-		return
-	}
-	l.Lg.Fatal().Msgf(mes, v)
+	return &Log
 }

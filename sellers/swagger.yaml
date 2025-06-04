@@ -1,0 +1,165 @@
+openapi: 3.0.1
+info:
+  title: Seller API
+  version: 1.0.0
+  description: API для управления продавцами, включая регистрацию, вход, обновление и удаление.
+
+servers:
+  - url: http://localhost:8084
+
+paths:
+  /api/v1/auth/register:
+    post:
+      summary: Регистрация нового продавца
+      tags:
+        - Auth
+      requestBody:
+        description: Данные для регистрации продавца
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: seller@example.com
+                password:
+                  type: string
+                  example: strongpassword123
+                seller_info:
+                  $ref: '#/components/schemas/Seller'
+      responses:
+        '201':
+          description: Успешная регистрация, возвращает ID продавца
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: UUID продавца
+                    example: "123e4567-e89b-12d3-a456-426614174000"
+        '400':
+          description: Неверный формат запроса
+
+  /api/v1/auth/login:
+    post:
+      summary: Вход продавца
+      tags:
+        - Auth
+      requestBody:
+        description: Данные для входа
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: seller@example.com
+                password:
+                  type: string
+                  example: strongpassword123
+      responses:
+        '200':
+          description: Успешный вход, возвращает токен JWT или подобный токен доступа.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        '401':
+          description: Неверные учетные данные
+
+  /api/v1/sellers/update/{uuid}:
+    put:
+      summary: Обновление информации о продавце по UUID
+      tags:
+        - Sellers
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          description: UUID продавца для обновления.
+          schema:
+            type: string
+            format: uuid
+            example: "123e4567-e89b-12d3-a456-426614174000"
+      requestBody:
+        description: Обновляемые данные продавца.
+        required:true,
+        content:
+          application/json:
+            schema:
+              $ref:#/components/schemas/Seller
+      responses:
+        '204':
+          description: Успешное обновление (без содержимого)
+        '400':
+          description: Неверный формат UUID или тела запроса.
+        '401':
+          description: Неавторизованный доступ.
+        '404':
+          description:'Продавец не найден.'
+
+  /api/v1/sellers/delete/{uuid}:
+    delete:
+      summary: Удаление продавца по UUID.
+      tags:
+        - Sellers
+      parameters：
+        - name：uuid：
+          in：path：
+          required：true：
+          description：UUID продавца для удаления。
+          schema：
+            type：string：
+            format：uuid：
+            example："123e4567-e89b-12d3-a456-426614174000"
+      responses：
+        '204'：
+          description：Успешное удаление.
+        '400'：
+          description：Неверный формат UUID.
+        '401'：
+          description：Неавторизованный доступ.
+        '404'：
+          description：Продавец не найден.
+
+components:
+
+  schemas:
+
+    Seller:
+
+      type : object
+
+      properties :
+
+        name :
+
+          type : string
+
+          example : "John Doe"
+
+        address :
+
+          type : string
+
+          example : "123 Main St"
+
+        phone :
+
+          type : string
+
+          example : "+1234567890"
+
+        // Добавьте сюда все необходимые поля, соответствующие структуре request.Seller

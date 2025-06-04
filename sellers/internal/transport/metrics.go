@@ -27,5 +27,4 @@ func metrics(f func(ctx *fasthttp.RequestCtx), methodName string) func(ctx *fast
 		RequestCounter.WithLabelValues(methodName, strconv.Itoa(ctx.Response.StatusCode())).Inc()
 		TimeCounter.WithLabelValues(methodName, strconv.Itoa(ctx.Response.StatusCode())).Add(float64(TimeWorkF))
 	}
-
 }

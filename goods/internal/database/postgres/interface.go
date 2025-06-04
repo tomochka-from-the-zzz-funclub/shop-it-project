@@ -7,12 +7,15 @@ import (
 )
 
 type InterfacePostgresDB interface {
-	CreateGoodCard(goodCard models.GoodCard) (uuid.UUID, error)
-	DeleteGoodCard(cardID uuid.UUID) error
-	UpdateGoodCard(id uuid.UUID, goodCard models.GoodCard) error
-	CreateGood(cardID uuid.UUID, quantity int) error
-	DeleteGood(goodID uuid.UUID) error
-	AddCountGood(goodID uuid.UUID, number int) (int, error)
-	DeleteCountGood(goodID uuid.UUID, number int) (int, error)
+	CreateGoodCard(goodCard models.GoodCard, sellerID uuid.UUID) (uuid.UUID, error)
+	DeleteGoodCard(cardID uuid.UUID, sellerID uuid.UUID) error
+	UpdateGoodCard(id uuid.UUID, goodCard models.GoodCard, sellerID uuid.UUID) error
+	CreateGood(cardID uuid.UUID, quantity int, sellerID uuid.UUID) error
+	DeleteGood(goodID uuid.UUID, sellerID uuid.UUID) error
+	AddCountGood(goodID uuid.UUID, number int, sellerID uuid.UUID) (int, error)
+	DeleteCountGood(goodID uuid.UUID, number int, sellerID uuid.UUID) (int, error)
+
 	ReadGood(goodID uuid.UUID) (models.Good, error)
+
+	SearchGoods(req models.SearchRequest) (*models.SearchResponse, error)
 }

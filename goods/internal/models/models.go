@@ -17,3 +17,18 @@ type Good struct {
 	Card     GoodCard  `json:"card"`
 	Quantity int       `json:"quantity"` // Количество товара
 }
+
+type SearchRequest struct {
+	Query    string  `json:"query"`
+	MinPrice float64 `json:"min_price"`
+	MaxPrice float64 `json:"max_price"`
+	Page     int     `json:"page"`
+	PageSize int     `json:"page_size"`
+}
+
+type SearchResponse struct {
+	Products []*Good `json:"products"`
+	Total    int64   `json:"total"`
+	Page     int     `json:"page"`
+	PageSize int     `json:"page_size"`
+}

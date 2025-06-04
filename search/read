@@ -1,0 +1,16 @@
+Обзор архитектуры:
+1. HTTP-метод HandleSearchGoods
+Реализован в handlers/search.go. Получает параметры из GET-запроса и передаёт их в сервисный слой. Вызывает метод SrvSearchGoods, который запускает поиск в Elasticsearch.
+
+2. Сервисный слой (internal/service/search.go)
+Содержит логику, которая использует elastic.GetClient() для выполнения запроса к Elasticsearch и парсинга результата в SearchResponse.
+
+3. Работа с Elasticsearch (internal/elastic/client.go)
+Init() — инициализация клиента.
+
+BuildSearchQuery() — формирует запрос в Elasticsearch по фильтрам: текст, цена, сортировка, пагинация.
+
+ParseSearchResult() — разбирает ответ от Elasticsearch.
+
+4. Модели (internal/models/search.go)
+Содержат DTO-структуры: входной SearchRequest, выходной SearchResponse и структуру Good.

@@ -40,12 +40,28 @@ func NewPostgres(cfg config.Config) *Postgres {
 	}
 }
 
-func (db *Postgres) CreateGoodCard(goodCard models.GoodCard) (uuid.UUID, error) {
+func (db *Postgres) checkSellerExists(sellerID uuid.UUID) error {
+	var exists bool
+	err := db.Connection.QueryRow("SELECT EXISTS(SELECT 1 FROM seller_info WHERE id = $1)", sellerID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return err
+	}
+	return nil
+}
+
+func (db *Postgres) CreateGoodCard(goodCard models.GoodCard, sellerID uuid.UUID) (uuid.UUID, error) {
+	if err := db.checkSellerExists(sellerID); err != nil {
+		return uuid.Nil, err
+	}
+
 	// Проверяем, существует ли карточка товара с полным совпадением
 	var existingID uuid.UUID
 	checkQuery := `
 		SELECT uuid FROM good_cards 
-		WHERE name = \$1 AND description = \$2 AND price = \$3 AND weight = \$4 AND seller_id = \$5 AND is_active = \$6`
+		WHERE name = $1 AND description = $2 AND price = $3 AND weight = $4 AND seller_id = $5 AND is_active = $6`
 
 	err := db.Connection.QueryRow(checkQuery, goodCard.Name, goodCard.Description, goodCard.Price, goodCard.Weight, goodCard.SellerID, goodCard.IsActive).Scan(&existingID)
 	if err == nil {
@@ -59,7 +75,7 @@ func (db *Postgres) CreateGoodCard(goodCard models.GoodCard) (uuid.UUID, error) 
 	// Если карточка не найдена, добавляем новую
 	query := `
 		INSERT INTO good_cards (price, name, description, weight, seller_id, is_active)
-		VALUES (\$1, \$2, \$3, \$4, \$5, \$6)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING uuid`
 
 	var id uuid.UUID
@@ -70,7 +86,10 @@ func (db *Postgres) CreateGoodCard(goodCard models.GoodCard) (uuid.UUID, error) 
 	return id, nil
 }
 
-func (db *Postgres) DeleteGoodCard(cardID uuid.UUID) error {
+func (db *Postgres) DeleteGoodCard(cardID uuid.UUID, sellerID uuid.UUID) error {
+	if err := db.checkSellerExists(sellerID); err != nil {
+		return err
+	}
 	var exists bool
 	err := db.Connection.QueryRow("SELECT EXISTS(SELECT 1 FROM good_cards WHERE uuid = $1)", cardID).Scan(&exists)
 
@@ -81,11 +100,14 @@ func (db *Postgres) DeleteGoodCard(cardID uuid.UUID) error {
 		return myErrors.ErrGoodCardNotFound // Если карточка товара не найдена
 	}
 
-	_, err = db.Connection.Exec(`DELETE FROM good_cards WHERE uuid = \$1`, cardID)
+	_, err = db.Connection.Exec(`DELETE FROM good_cards WHERE uuid = $1`, cardID)
 	return err // Возвращаем ошибку, если она возникла, или nil, если удаление прошло успешно
 }
 
-func (db *Postgres) UpdateGoodCard(id uuid.UUID, goodCard models.GoodCard) error {
+func (db *Postgres) UpdateGoodCard(id uuid.UUID, goodCard models.GoodCard, sellerID uuid.UUID) error {
+	if err := db.checkSellerExists(sellerID); err != nil {
+		return err
+	}
 	// Проверяем, существует ли карточка товара с таким ID
 	var exists bool
 	err := db.Connection.QueryRow("SELECT EXISTS(SELECT 1 FROM good_cards WHERE uuid = $1)", id).Scan(&exists)
@@ -146,27 +168,48 @@ func (db *Postgres) UpdateGoodCard(id uuid.UUID, goodCard models.GoodCard) error
 	return err_
 }
 
-///////////////////////////////////////////////////good/////////////////////////////////////////////////////////////////////////////////////////////////
-
-func (db *Postgres) CreateGood(cardID uuid.UUID, quantity int) error {
-	// Проверяем, существует ли карточка товара с таким ID
+// /////////////////////////////////////////////////good/////////////////////////////////////////////////////////////////////////////////////////////////
+func (db *Postgres) CreateGood(cardID uuid.UUID, quantity int, sellerID uuid.UUID) error {
+	if err := db.checkSellerExists(sellerID); err != nil {
+		return err
+	}
 	var exists bool
 	err := db.Connection.QueryRow("SELECT EXISTS(SELECT 1 FROM good_cards WHERE uuid = $1)", cardID).Scan(&exists)
-
 	if err != nil {
-		return myErrors.ErrCreateGoodInternal // Ошибка при выполнении запроса
+		return myErrors.ErrCreateGoodInternal
 	}
 	if !exists {
 		return myErrors.ErrGoodCardNotFound
 	}
 
-	// Создаем запрос на добавление товара
+	// 1. Создаем запись в goods
 	query := "INSERT INTO goods (card_id, quantity) VALUES ($1, $2)"
 	_, err = db.Connection.Exec(query, cardID, quantity)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 2. Загружаем карточку и количество
+	var gc models.GoodCard
+	var qty int
+
+	err = db.Connection.QueryRow(`
+		SELECT gc.uuid, gc.price, gc.name, gc.description, gc.weight, gc.seller_id, gc.is_active, g.quantity
+		FROM good_cards gc
+		JOIN goods g ON gc.uuid = g.card_id
+		WHERE gc.uuid = $1
+	`, cardID).Scan(&gc.UUID, &gc.Price, &gc.Name, &gc.Description, &gc.Weight, &gc.SellerID, &gc.IsActive, &qty)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (db *Postgres) DeleteGood(goodID uuid.UUID) error {
+func (db *Postgres) DeleteGood(goodID uuid.UUID, sellerID uuid.UUID) error {
+	if err := db.checkSellerExists(sellerID); err != nil {
+		return err
+	}
 	// Проверяем, существует ли товар с таким ID
 	var exists bool
 	err := db.Connection.QueryRow("SELECT EXISTS(SELECT 1 FROM goods WHERE card_id = $1)", goodID).Scan(&exists)
@@ -184,30 +227,34 @@ func (db *Postgres) DeleteGood(goodID uuid.UUID) error {
 	return err
 }
 
-func (db *Postgres) AddCountGood(goodID uuid.UUID, number int) (int, error) {
-	// Проверяем, существует ли товар с таким ID
+func (db *Postgres) AddCountGood(goodID uuid.UUID, number int, sellerID uuid.UUID) (int, error) {
+	if err := db.checkSellerExists(sellerID); err != nil {
+		return 0, err
+	}
 	var exists bool
 	err := db.Connection.QueryRow("SELECT EXISTS(SELECT 1 FROM goods WHERE card_id = $1)", goodID).Scan(&exists)
 
 	if err != nil {
-		return 0, myErrors.ErrAddCountGoodInternal // Ошибка при выполнении запроса
+		return 0, myErrors.ErrAddCountGoodInternal
 	}
 	if !exists {
 		return 0, myErrors.ErrGoodNotFound
 	}
 
-	// Обновляем количество товара
 	query := "UPDATE goods SET quantity = quantity + $1 WHERE card_id = $2 RETURNING quantity"
 	var newQuantity int
 	err = db.Connection.QueryRow(query, number, goodID).Scan(&newQuantity)
 	if err != nil {
-		return 0, err // Возвращаем ошибку, если что-то пошло не так
+		return 0, err
 	}
 
-	return newQuantity, nil // Возвращаем новое количество товара
+	return newQuantity, nil
 }
 
-func (db *Postgres) DeleteCountGood(goodID uuid.UUID, number int) (int, error) {
+func (db *Postgres) DeleteCountGood(goodID uuid.UUID, number int, sellerID uuid.UUID) (int, error) {
+	if err := db.checkSellerExists(sellerID); err != nil {
+		return 0, err
+	}
 	// Проверяем, существует ли товар с таким ID
 	var exists bool
 	err := db.Connection.QueryRow("SELECT EXISTS(SELECT 1 FROM goods WHERE card_id = $1)", goodID).Scan(&exists)
@@ -243,6 +290,7 @@ func (db *Postgres) DeleteCountGood(goodID uuid.UUID, number int) (int, error) {
 }
 
 func (db *Postgres) ReadGood(goodID uuid.UUID) (models.Good, error) {
+
 	// Проверяем, существует ли товар с таким ID
 	var good models.Good
 	query := `
@@ -260,4 +308,91 @@ func (db *Postgres) ReadGood(goodID uuid.UUID) (models.Good, error) {
 	}
 
 	return good, nil // Возвращаем структуру Good с заполненной карточкой товара
+}
+
+// func IndexGood(ctx context.Context, good models.Good) error {
+// 	body, err := json.Marshal(good)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	res, err := elastic.GetClient().Index(
+// 		"goods",               // индекс
+// 		bytes.NewReader(body), // тело запроса
+// 		elastic.GetClient().Index.WithDocumentID(good.UUID.String()), // по UUID карточки
+// 		elastic.GetClient().Index.WithContext(ctx),
+// 	)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	defer res.Body.Close()
+
+// 	if res.IsError() {
+// 		return fmt.Errorf("Elasticsearch index error: %s", res.String())
+// 	}
+
+// 	return nil
+// }
+
+func (db *Postgres) SearchGoods(req models.SearchRequest) (*models.SearchResponse, error) {
+	offset := (req.Page - 1) * req.PageSize
+	query := `
+		SELECT g.card_id, gc.name, gc.description, gc.price, gc.weight, gc.is_active, g.quantity
+		FROM goods g
+		JOIN good_cards gc ON g.card_id = gc.uuid
+		WHERE ($1 = '' OR gc.name ILIKE '%' || $1 || '%')
+		AND ($2 = 0 OR gc.price >= $2)
+		AND ($3 = 0 OR gc.price <= $3)
+		LIMIT $4 OFFSET $5
+	`
+	rows, err := db.Connection.Query(query,
+		req.Query, req.MinPrice, req.MaxPrice, req.PageSize, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	defer rows.Close()
+
+	goods := []*models.Good{}
+	for rows.Next() {
+		var g models.Good
+		var card models.GoodCard
+		if err := rows.Scan(
+			&g.UUID,
+			&card.Name,
+			&card.Description,
+			&card.Price,
+			&card.Weight,
+			&card.IsActive,
+			&g.Quantity,
+		); err != nil {
+			return nil, err
+		}
+		card.UUID = g.UUID
+		g.Card = card
+		goods = append(goods, &g)
+	}
+
+	// Подсчёт общего количества
+	countQuery := `
+		SELECT COUNT(*)
+		FROM goods g
+		JOIN good_cards gc ON g.card_id = gc.uuid
+		WHERE ($1 = '' OR gc.name ILIKE '%' || $1 || '%')
+		AND ($2 = 0 OR gc.price >= $2)
+		AND ($3 = 0 OR gc.price <= $3)
+	`
+	var total int64
+	err = db.Connection.QueryRow(countQuery, req.Query, req.MinPrice, req.MaxPrice).Scan(&total)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.SearchResponse{
+		Products: goods,
+		Total:    total,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	}, nil
 }

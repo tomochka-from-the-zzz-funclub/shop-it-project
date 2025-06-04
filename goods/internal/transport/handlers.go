@@ -3,6 +3,7 @@ package transport
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	config "goods/internal/cfg"
 	"goods/internal/models"
@@ -56,8 +57,8 @@ func HandleCreate(cfg config.Config, s service.InterfaceService) {
 
 	// Получить информацию о товаре и его карточке по UUID товара
 	hb.rout.GET("/goods/{id}", hb.HandleReadCard())
-
-	fmt.Println(fasthttp.ListenAndServe(":8080", hb.rout.Handler))
+	hb.rout.GET("/goods/search", hb.GetWithFiltration())
+	fmt.Println(fasthttp.ListenAndServe(":8085", hb.rout.Handler))
 }
 
 // Вспомогательная функция для отправки JSON ответа
@@ -78,11 +79,17 @@ func httpErrorResponse(ctx *fasthttp.RequestCtx, statusCode int, message string)
 	response := map[string]string{"error": message}
 	jsonResponse(ctx, response)
 }
-
 func (hb *HandlersBuilder) HandleCreateGoodCard() func(ctx *fasthttp.RequestCtx) {
 	return metrics(func(ctx *fasthttp.RequestCtx) {
 		if !ctx.IsPost() {
 			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
 			return
 		}
 
@@ -91,8 +98,9 @@ func (hb *HandlersBuilder) HandleCreateGoodCard() func(ctx *fasthttp.RequestCtx)
 			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid request body")
 			return
 		}
+		card.SellerID = sellerID
 
-		id, err := hb.srv.SrvCreateGoodCard(card)
+		id, err := hb.srv.SrvCreateGoodCard(card, sellerID)
 		if err != nil {
 			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to create good card")
 			return
@@ -110,6 +118,13 @@ func (hb *HandlersBuilder) HandleDeleteGoodCard() func(ctx *fasthttp.RequestCtx)
 			return
 		}
 
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
+			return
+		}
+
 		idStr := ctx.UserValue("id").(string)
 		id, err := uuid.Parse(idStr)
 		if err != nil {
@@ -117,12 +132,12 @@ func (hb *HandlersBuilder) HandleDeleteGoodCard() func(ctx *fasthttp.RequestCtx)
 			return
 		}
 
-		if err := hb.srv.SrvDeleteGoodCard(id); err != nil {
+		if err := hb.srv.SrvDeleteGoodCard(id, sellerID); err != nil {
 			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to delete good card")
 			return
 		}
 
-		ctx.SetStatusCode(fasthttp.StatusNoContent) // 204 No Content
+		ctx.SetStatusCode(fasthttp.StatusNoContent)
 	}, "HandleDeleteGoodCard")
 }
 
@@ -130,6 +145,13 @@ func (hb *HandlersBuilder) HandleUpdateGoodCard() func(ctx *fasthttp.RequestCtx)
 	return metrics(func(ctx *fasthttp.RequestCtx) {
 		if !ctx.IsPut() {
 			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
 			return
 		}
 
@@ -145,8 +167,9 @@ func (hb *HandlersBuilder) HandleUpdateGoodCard() func(ctx *fasthttp.RequestCtx)
 			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid request body")
 			return
 		}
+		card.SellerID = sellerID
 
-		if err := hb.srv.SrvUpdateGoodCard(id, card); err != nil {
+		if err := hb.srv.SrvUpdateGoodCard(id, card, sellerID); err != nil {
 			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to update good card")
 			return
 		}
@@ -163,6 +186,13 @@ func (hb *HandlersBuilder) HandleReadCard() func(ctx *fasthttp.RequestCtx) {
 			return
 		}
 
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
+			return
+		}
+
 		idStr := ctx.UserValue("id").(string)
 		id, err := uuid.Parse(idStr)
 		if err != nil {
@@ -170,7 +200,7 @@ func (hb *HandlersBuilder) HandleReadCard() func(ctx *fasthttp.RequestCtx) {
 			return
 		}
 
-		card, err := hb.srv.SrvReadGood(id)
+		card, err := hb.srv.SrvReadGood(id, sellerID)
 		if err != nil {
 			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to read good card")
 			return
@@ -181,76 +211,17 @@ func (hb *HandlersBuilder) HandleReadCard() func(ctx *fasthttp.RequestCtx) {
 	}, "HandleReadCard")
 }
 
-func (hb *HandlersBuilder) HandleAddCountGood() func(ctx *fasthttp.RequestCtx) {
-	return metrics(func(ctx *fasthttp.RequestCtx) {
-		if !ctx.IsPost() {
-			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
-			return
-		}
-
-		idStr := ctx.UserValue("id").(string)
-		id, err := uuid.Parse(idStr)
-		if err != nil {
-			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid UUID")
-			return
-		}
-
-		var req struct {
-			Number int `json:"number"`
-		}
-		if err := json.Unmarshal(ctx.PostBody(), &req); err != nil || req.Number <= 0 {
-			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid number")
-			return
-		}
-
-		newCount, err := hb.srv.SrvAddCountGood(id, req.Number)
-		if err != nil {
-			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to add count")
-			return
-		}
-
-		ctx.SetStatusCode(fasthttp.StatusOK)
-		jsonResponse(ctx, map[string]interface{}{"new_count": newCount})
-	}, "HandleAddCountGood")
-}
-
-func (hb *HandlersBuilder) HandleDeleteCountGood() func(ctx *fasthttp.RequestCtx) {
-	return metrics(func(ctx *fasthttp.RequestCtx) {
-		if !ctx.IsPost() {
-			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
-			return
-		}
-
-		idStr := ctx.UserValue("id").(string)
-		id, err := uuid.Parse(idStr)
-		if err != nil {
-			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid UUID")
-			return
-		}
-
-		var req struct {
-			Number int `json:"number"`
-		}
-		if err := json.Unmarshal(ctx.PostBody(), &req); err != nil || req.Number <= 0 {
-			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid number")
-			return
-		}
-
-		newCount, err := hb.srv.SrvDeleteCountGood(id, req.Number)
-		if err != nil {
-			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to delete count")
-			return
-		}
-
-		ctx.SetStatusCode(fasthttp.StatusOK)
-		jsonResponse(ctx, map[string]interface{}{"new_count": newCount})
-	}, "HandleDeleteCountGood")
-}
-
 func (hb *HandlersBuilder) HandleCreateGood() func(ctx *fasthttp.RequestCtx) {
 	return metrics(func(ctx *fasthttp.RequestCtx) {
 		if !ctx.IsPost() {
 			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
 			return
 		}
 
@@ -259,9 +230,9 @@ func (hb *HandlersBuilder) HandleCreateGood() func(ctx *fasthttp.RequestCtx) {
 			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid request body")
 			return
 		}
+		card.SellerID = sellerID
 
-		// Создаём карточку товара, что является созданием товара
-		id, err := hb.srv.SrvCreateGoodCard(card)
+		id, err := hb.srv.SrvCreateGoodCard(card, sellerID)
 		if err != nil {
 			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to create good")
 			return
@@ -279,6 +250,13 @@ func (hb *HandlersBuilder) HandleDeleteGood() func(ctx *fasthttp.RequestCtx) {
 			return
 		}
 
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
+			return
+		}
+
 		idStr := ctx.UserValue("id").(string)
 		id, err := uuid.Parse(idStr)
 		if err != nil {
@@ -286,12 +264,155 @@ func (hb *HandlersBuilder) HandleDeleteGood() func(ctx *fasthttp.RequestCtx) {
 			return
 		}
 
-		// Удаляем карточку товара по cardId
-		if err := hb.srv.SrvDeleteGoodCard(id); err != nil {
+		if err := hb.srv.SrvDeleteGoodCard(id, sellerID); err != nil {
 			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to delete good")
 			return
 		}
 
 		ctx.SetStatusCode(fasthttp.StatusNoContent)
 	}, "HandleDeleteGood")
+}
+
+func (hb *HandlersBuilder) HandleAddCountGood() func(ctx *fasthttp.RequestCtx) {
+	return metrics(func(ctx *fasthttp.RequestCtx) {
+		if !ctx.IsPost() {
+			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
+			return
+		}
+
+		idStr := ctx.UserValue("id").(string)
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid UUID")
+			return
+		}
+
+		var req struct {
+			Number int `json:"number"`
+		}
+		if err := json.Unmarshal(ctx.PostBody(), &req); err != nil || req.Number <= 0 {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid number")
+			return
+		}
+
+		newCount, err := hb.srv.SrvAddCountGood(id, req.Number, sellerID)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to add count")
+			return
+		}
+
+		ctx.SetStatusCode(fasthttp.StatusOK)
+		jsonResponse(ctx, map[string]interface{}{"new_count": newCount})
+	}, "HandleAddCountGood")
+}
+
+func (hb *HandlersBuilder) HandleDeleteCountGood() func(ctx *fasthttp.RequestCtx) {
+	return metrics(func(ctx *fasthttp.RequestCtx) {
+		if !ctx.IsPost() {
+			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+
+		sellerIDStr := string(ctx.Request.Header.Peek("X-Seller-ID"))
+		sellerID, err := uuid.Parse(sellerIDStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid seller ID")
+			return
+		}
+
+		idStr := ctx.UserValue("id").(string)
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid UUID")
+			return
+		}
+
+		var req struct {
+			Number int `json:"number"`
+		}
+		if err := json.Unmarshal(ctx.PostBody(), &req); err != nil || req.Number <= 0 {
+			httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid number")
+			return
+		}
+
+		newCount, err := hb.srv.SrvDeleteCountGood(id, req.Number, sellerID)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to delete count")
+			return
+		}
+
+		ctx.SetStatusCode(fasthttp.StatusOK)
+		jsonResponse(ctx, map[string]interface{}{"new_count": newCount})
+	}, "HandleDeleteCountGood")
+}
+
+func (hb *HandlersBuilder) GetWithFiltration() func(ctx *fasthttp.RequestCtx) {
+	return metrics(func(ctx *fasthttp.RequestCtx) {
+		if !ctx.IsGet() {
+			httpErrorResponse(ctx, fasthttp.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+
+		query := string(ctx.QueryArgs().Peek("query"))
+		minPriceStr := string(ctx.QueryArgs().Peek("min_price"))
+		maxPriceStr := string(ctx.QueryArgs().Peek("max_price"))
+		pageStr := string(ctx.QueryArgs().Peek("page"))
+		pageSizeStr := string(ctx.QueryArgs().Peek("page_size"))
+
+		var minPrice, maxPrice float64
+		var page, pageSize int
+		var err error
+
+		if minPriceStr != "" {
+			minPrice, err = strconv.ParseFloat(minPriceStr, 64)
+			if err != nil {
+				httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid min_price")
+				return
+			}
+		}
+		if maxPriceStr != "" {
+			maxPrice, err = strconv.ParseFloat(maxPriceStr, 64)
+			if err != nil {
+				httpErrorResponse(ctx, fasthttp.StatusBadRequest, "Invalid max_price")
+				return
+			}
+		}
+		if pageStr != "" {
+			page, _ = strconv.Atoi(pageStr)
+		}
+		if pageSizeStr != "" {
+			pageSize, _ = strconv.Atoi(pageSizeStr)
+		}
+		if page <= 0 {
+			page = 1
+		}
+		if pageSize <= 0 {
+			pageSize = 10
+		}
+
+		req := models.SearchRequest{
+			Query:    query,
+			MinPrice: minPrice,
+			MaxPrice: maxPrice,
+			Page:     page,
+			PageSize: pageSize,
+		}
+
+		resp, err := hb.srv.SrvSearchGoods(req)
+		if err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Search failed")
+			return
+		}
+		ctx.SetContentType("application/json")
+		if err := json.NewEncoder(ctx.Response.BodyWriter()).Encode(resp); err != nil {
+			httpErrorResponse(ctx, fasthttp.StatusInternalServerError, "Failed to write response")
+		}
+	}, "HandleReadCard")
 }
